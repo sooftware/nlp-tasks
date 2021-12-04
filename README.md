@@ -1,9 +1,6 @@
 # Natural Language Processing Tasks and Examples
    
-With the advancement of A.I. technology in recent years, natural language processing technology has been able to solve so many problems. 
-While working as an NLP engineer, I encountered various tasks, and I thought it would be nice to gather and organize the natural language processing tasks I have dealt with in one place. 
-Borrow [Kyubyong's project](https://github.com/Kyubyong/nlp-tasks) format, I organized natural language processing tasks with references and example code.
-
+With the advancement of A.I. technology in recent years, natural language processing technology has been able to solve so many problems. While working as an NLP engineer, I encountered various tasks, and I thought it would be nice to gather and organize the natural language processing tasks I have dealt with in one place. Borrowing [Kyubyong's project](https://github.com/Kyubyong/nlp-tasks) format, I organized natural language processing tasks with references and example code.
   
 ## Automated Essay Scoring
   
