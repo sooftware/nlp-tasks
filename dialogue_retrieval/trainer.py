@@ -71,6 +71,12 @@ class DialogueRetrievalTrainer:
                                 responses=responses,
                                 response_attention_masks=response_attention_masks)
 
+            # Refer: "Sequential Attention-based Network for Noetic End-to-End Response Selection"
+            # Convert the problem into a binary classification task
+
+            # Cross-Entropy Error
+            # E = -Σ(targets * log(ys))
+            
             mask = torch.eye(batch_size).to(self.device)  
             loss = F.log_softmax(scores, dim=-1) * mask
             loss = (-loss.sum(dim=1)).mean()
