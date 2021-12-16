@@ -72,7 +72,7 @@ class DialogueRetrievalTrainer:
                                 response_attention_masks=response_attention_masks)
 
             mask = torch.eye(batch_size).to(self.device)  
-            loss = F.log_softmax(scores * 5, dim=-1) * mask
+            loss = F.log_softmax(scores, dim=-1) * mask
             loss = (-loss.sum(dim=1)).mean()
 
             loss = loss / self.accumulate_grad_batches
