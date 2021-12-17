@@ -58,7 +58,7 @@ class DialogueRetrievalTrainer:
         self.model.train()
 
         for step, batch in enumerate(tqdm(self.train_loader)):
-            contexts, context_attention_masks, responses, response_attention_masks = batch
+            contexts, context_attention_masks, responses, response_attention_masks, labels = batch
             batch_size = contexts.size(0)
 
             contexts = contexts.to(self.device)
@@ -72,7 +72,7 @@ class DialogueRetrievalTrainer:
                                 response_attention_masks=response_attention_masks)
 
             mask = torch.eye(batch_size).to(self.device)  
-            loss = F.log_softmax(scores * 5, dim=-1) * mask
+            loss = F.log_softmax(scores, dim=-1) * mask
             loss = (-loss.sum(dim=1)).mean()
 
             loss = loss / self.accumulate_grad_batches

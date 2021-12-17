@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from functools import partial
 
-from dataset import load_dataset, DialogueRetrievalDataset, collate_fn
+from dataset import DialogueRetrievalDataset, collate_fn
 from model import PolyEncoderModel
 from trainer import DialogueRetrievalTrainer
 
@@ -20,13 +20,14 @@ def _get_parser():
     parser = argparse.ArgumentParser(description='NLP Tasks - Dialogue Retrieval')
     # Basic arguments
     parser.add_argument('--seed', type=int, default=7)
-    parser.add_argument('--data_dir', type=str, required=True)
+    parser.add_argument('--train_data_path', type=str, required=True)
+    parser.add_argument('--valid_data_path', type=str, required=True)
     parser.add_argument('--save_dir', type=str, default='checkpoints')
     # Model arguments
     parser.add_argument('--pretrain_model_name_or_path', type=str, default='tunib/electra-ko-base')
     parser.add_argument('--num_poly_codes', type=int, default=64)
     # Training arguments
-    parser.add_argument('--valid_ratio', type=float, default=0.05)
+    parser.add_argument('--valid_sample_count', type=float, default=1000)
     parser.add_argument('--num_workers', type=int, default=4)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--lr', type=float, default=3e-05)
@@ -57,10 +58,10 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.pretrain_model_name_or_path)
     model = nn.DataParallel(PolyEncoderModel(args.pretrain_model_name_or_path, args.num_poly_codes)).to(device)
 
-    datasets = load_dataset(args.data_dir, tokenizer.sep_token, args.valid_ratio)
-
-    for dataset_name in datasets.keys():
-        dataset = DialogueRetrievalDataset(datasets[dataset_name], tokenizer)
+    for dataset_name in ("train", "valid"):
+        dataset = DialogueRetrievalDataset(args.train_data_path if dataset_name == 'train' else args.valid_data_path,
+                                           tokenizer=tokenizer,
+                                           sample_cnt=None if dataset_name == 'train' else args.valid_sample_count)
         data_loaders[dataset_name] = DataLoader(dataset=dataset,
                                                 num_workers=args.num_workers,
                                                 collate_fn=partial(

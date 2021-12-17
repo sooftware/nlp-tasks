@@ -77,13 +77,6 @@ class PolyEncoderModel(nn.Module):
             responses,
             response_attention_masks,
     ):
-        """
-        :param contexts: B x T
-        :param context_attention_masks: B x T
-        :param responses: B x R x T
-        :param response_attention_masks: B x R x T
-        :return:
-        """
         num_responses = self._get_num_responses(responses)
         is_training = True if num_responses == 1 else False
 
