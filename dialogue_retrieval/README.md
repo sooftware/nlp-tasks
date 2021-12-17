@@ -3,10 +3,10 @@
 ## Example Card
   
 - Dataset
-  - Name: AI Hub SNS Dataset
-  - Language: Korean
-  - Data Size: 1.2M Session  
-  - Download link: [[link]](https://aihub.or.kr/aidata/30718)
+  - Name: Ubuntu Dialogue Corpus
+  - Paper: [[link]](https://arxiv.org/abs/1506.08909)
+  - Language: English
+  - Download link: [[link]](https://www.dropbox.com/s/2fdn26rj6h9bpvl/ubuntu_data.zip?dl=0)
 - Model
   - Name: Poly Encoder
   - Paper: [[link]](https://arxiv.org/abs/1905.01969)  
@@ -19,7 +19,7 @@
   
 ## Get Started
   
-You can train with [AI Hub SNS Dataset](https://aihub.or.kr/aidata/30718) directly.    
+You can train with [Ubuntu Dialogue Corpus](https://arxiv.org/abs/1506.08909) directly.    
 If you want to train with a different dataset, you only need to create a new load_dataset function and Dataset class.    
 Of course, it is also necessary to change the pre-trained model name to fit the language.  
     
