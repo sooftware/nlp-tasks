@@ -2,157 +2,146 @@
 # code by Soohwan Kim @sooftware
 
 import wandb
-import time
-import os
 import torch
-import logging
+import torch.nn as nn
 import numpy as np
-import torch.nn.functional as F
+import os
 from tqdm import tqdm
 from sklearn.metrics import label_ranking_average_precision_score
+from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import LambdaLR
+from typing import Dict
 
-logger = logging.getLogger(__name__)
+from utils import mkdir
 
 
-class DialogueRetrievalTrainer:
+class Trainer:
     def __init__(
             self,
-            model,
-            train_loader,
-            valid_loader,
-            optimizer,
-            scheduler,
-            num_epochs,
-            device,
-            tokenizer,
-            gradient_clip_val: float,
+            model: nn.Module,
+            data_loaders: Dict[str, DataLoader],
+            optimizer: nn.Module,
+            scheduler: LambdaLR,
+            num_epochs: int,
             accumulate_grad_batches: int,
-            log_every: int = 20,
-            save_every: int = 10_000,
-            save_dir: str = 'ckpt',
+            max_grad_norm: int,
+            print_every: int,
+            eval_every: int,
+            output_dir: str,
+            device: torch.device,
     ) -> None:
-        super(DialogueRetrievalTrainer, self).__init__()
         self.model = model
-        self.train_loader = train_loader
-        self.valid_loader = valid_loader
+        self.data_loaders = data_loaders
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.log_every = log_every
-        self.save_every = save_every
         self.num_epochs = num_epochs
-        self.tokenizer = tokenizer
-        self.sos_id = tokenizer.bos_token_id
-        self.eos_id = tokenizer.eos_token_id
-        self.device = device
-        self.gradient_clip_val = gradient_clip_val
         self.accumulate_grad_batches = accumulate_grad_batches
-        self.save_dir = save_dir
+        self.max_grad_norm = max_grad_norm
+        self.print_every = print_every
+        self.eval_every = eval_every
+        self.global_step = 1
+        self.best_eval_loss = 100.0
+        self.output_dir = output_dir
+        self.criterion = nn.CrossEntropyLoss().to(device)
+        self.device = device
 
-    def get_lr(self):
-        for param_group in self.optimizer.param_groups:
-            return param_group['lr']
+    def _train_epoch(self, epoch):
+        train_loss = 0
+        update_steps = 0
 
-    def _train_epoch(self):
-        total_loss = 0.0
+        with tqdm(total=len(self.data_loaders["train"]) // self.accumulate_grad_batches) as bar:
+            for step, batch in enumerate(self.data_loaders["train"]):
+                self.model.train()
+                self.optimizer.zero_grad()
 
-        self.model.train()
+                contexts, context_masks, responses, response_masks, labels = batch
 
-        for step, batch in enumerate(tqdm(self.train_loader)):
-            contexts, context_attention_masks, responses, response_attention_masks, labels = batch
-            batch_size = contexts.size(0)
+                loss = self.model(
+                    contexts.to(self.device),
+                    context_masks.to(self.device),
+                    responses.to(self.device),
+                    response_masks.to(self.device),
+                    labels.to(self.device),
+                )
 
-            contexts = contexts.to(self.device)
-            context_attention_masks = context_attention_masks.to(self.device)
-            responses = responses.to(self.device)
-            response_attention_masks = response_attention_masks.to(self.device)
+                loss = loss / self.accumulate_grad_batches
+                loss.backward()
 
-            scores = self.model(contexts=contexts,
-                                context_attention_masks=context_attention_masks,
-                                responses=responses,
-                                response_attention_masks=response_attention_masks)
+                train_loss += loss.item()
 
-            # Refer: "Sequential Attention-based Network for Noetic End-to-End Response Selection"
-            # Convert the problem into a binary classification task
+                if (step + 1) % self.accumulate_grad_batches == 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+                    update_steps += 1
+                    self.optimizer.step()
+                    self.scheduler.step()
+                    self.model.zero_grad()
+                    self.global_step += 1
 
-            # Cross-Entropy Error
-            # E = -Σ(targets * log(ys))
-            
-            mask = torch.eye(batch_size).to(self.device)  
-            loss = F.log_softmax(scores, dim=-1) * mask
-            loss = (-loss.sum(dim=1)).mean()
+                    if update_steps and update_steps % self.print_every == 0:
+                        bar.update(min(self.print_every, update_steps))
+                        wandb.log({"train_loss": train_loss / update_steps})
 
-            loss = loss / self.accumulate_grad_batches
+                    if self.global_step and self.global_step % self.eval_every == 0:
+                        eval_loss = self._evaluate()
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            total_loss += loss.item()
+                        if eval_loss < self.best_eval_loss:
+                            self.best_eval_loss = eval_loss
+                            save_dir = os.path.join(self.output_dir, f"epoch_{epoch}_step_{step}")
+                            mkdir(save_dir)
+                            torch.save(self.model.module.state_dict(), os.path.join(save_dir, "pytorch_model.bin"))
 
-            if step % self.accumulate_grad_batches == 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip_val)
-                self.optimizer.step()
-                self.scheduler.step()
-
-            if step % self.log_every == 0:
-                train_mean_loss = total_loss / (step + 1)
-                wandb.log({"lr": self.get_lr(),
-                           "train_loss": train_mean_loss,
-                           "batch_size": batch_size})
-
-            if step % self.save_every == 0:
-                if not os.path.exists(self.save_dir):
-                    os.mkdir(self.save_dir)
-                date_time = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
-
-                os.mkdir(os.path.join(self.save_dir, date_time))
-                torch.save(self.model, os.path.join(self.save_dir, date_time, "model.pt"))
-
-    def _validate(self, epoch):
-        r10 = r2 = r1 = r5 = 0
-        num_total_examples = 0
+    def _evaluate(self):
         mrr = list()
+        eval_loss, eval_hit_times = 0, 0
+        num_eval_examples = 0
+        r10 = r2 = r1 = r5 = 0
 
         self.model.eval()
 
-        with torch.no_grad():
-            for step, batch in enumerate(tqdm(self.valid_loader)):
-                contexts, context_attention_masks, responses, response_attention_masks, labels = batch
+        for step, batch in enumerate(self.data_loaders["valid"]):
+            contexts, context_masks, responses, response_masks, labels = batch
 
-                contexts = contexts.to(self.device)
-                context_attention_masks = context_attention_masks.to(self.device)
-                responses = responses.to(self.device)
-                response_attention_masks = response_attention_masks.to(self.device)
+            with torch.no_grad():
+                logits = self.model(
+                    contexts.to(self.device),
+                    context_masks.to(self.device),
+                    responses.to(self.device),
+                    response_masks.to(self.device),
+                )
+                loss = self.criterion(logits, torch.argmax(labels.to(self.device), 1))
 
-                scores = self.model(contexts=contexts,
-                                    context_attention_masks=context_attention_masks,
-                                    responses=responses,
-                                    response_attention_masks=response_attention_masks)
+            r2_indices = torch.topk(logits, 2)[1]
+            r5_indices = torch.topk(logits, 5)[1]
+            r10_indices = torch.topk(logits, 10)[1]
 
-                r2_indices = torch.topk(scores, 2)[1]
-                r5_indices = torch.topk(scores, 5)[1]
-                r10_indices = torch.topk(scores, 10)[1]
-                r1 += (scores.argmax(-1) == 0).sum().item()
-                r2 += ((r2_indices == 0).sum(-1)).sum().item()
-                r5 += ((r5_indices == 0).sum(-1)).sum().item()
-                r10 += ((r10_indices == 0).sum(-1)).sum().item()
+            r1 += (logits.argmax(-1) == 0).sum().item()
+            r2 += ((r2_indices == 0).sum(-1)).sum().item()
+            r5 += ((r5_indices == 0).sum(-1)).sum().item()
+            r10 += ((r10_indices == 0).sum(-1)).sum().item()
 
-                logits = logits.data.cpu().numpy()
-                for logit in logits:
-                    y_true = np.zeros(len(logit))
-                    y_true[0] = 1
-                    mrr.append(label_ranking_average_precision_score([y_true], [logit]))
+            logits = logits.data.cpu().numpy()
+            for logit in logits:
+                target = np.zeros(len(logit))
+                target[0] = 1
+                mrr.append(label_ranking_average_precision_score([target], [logit]))
 
-                num_total_examples += contexts.size(0)
+            eval_loss += loss.item()
+            num_eval_examples += labels.size(0)
 
-        wandb.log({"R1": r1 / num_total_examples,
-                   "R2": r2 / num_total_examples,
-                   "R5": r5 / num_total_examples,
-                   "R10": r10 / num_total_examples,
-                   "MRR": np.mean(mrr)})
+        eval_loss = eval_loss / len(self.data_loaders["valid"])
+
+        wandb.log({
+            'eval_loss': eval_loss,
+            'R1': r1 / num_eval_examples,
+            'R2': r2 / num_eval_examples,
+            'R5': r5 / num_eval_examples,
+            'R10': r10 / num_eval_examples,
+            'MRR': np.mean(mrr),
+            'global_step': self.global_step,
+        })
+        return eval_loss
 
     def fit(self):
         for epoch in range(self.num_epochs):
-            logger.info(f"Epoch {epoch} start..")
-            self._train_epoch()
-
-            logger.info(f"Validate..")
-            self._validate(epoch)
+            self._train_epoch(epoch)
+            self._evaluate()

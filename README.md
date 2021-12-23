@@ -34,10 +34,11 @@ With the advancement of A.I. technology in recent years, natural language proces
 ## Dialogue Retrieval
 
 - **`WIKI`** [Dialogue System](https://en.wikipedia.org/wiki/Dialogue_system)
-- **`DATA`** [Persona Chat](https://github.com/facebookresearch/ParlAI/tree/main/projects/personachat)
+- **`DATA`** [Persona Chat](https://github.com/facebookresearch/ParlAI/tree/main/projects/personachat)  
+  **`DATA`** [Ubuntu Dialogue Corpus](https://arxiv.org/abs/1506.08909)
 - **`DATA`** [Korean SNS Corpus](https://aihub.or.kr/aidata/30718)
 - **`MODEL`** [Poly Encoder](https://arxiv.org/abs/1905.01969)
-- **`CODE`** [Example with Korean SNS Corpus](https://github.com/sooftware/nlp-tasks/tree/main/dialogue_retrieval)
+- **`CODE`** [Example with Ubuntu Dialogue Corpus](https://github.com/sooftware/nlp-tasks/tree/main/dialogue_retrieval)
 
 ## Fill in the Blank
   

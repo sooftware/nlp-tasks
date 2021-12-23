@@ -1,58 +1,20 @@
+# MIT License
+# code by Soohwan Kim @sooftware
+
 import torch
 from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizerFast
 
 
-def collate_fn(batch, pad_token_id):
-    def seq_length_(p):
-        return len(p[0])
-
-    max_context_sample = max(batch, key=seq_length_)[0]
-    max_context_size = len(max_context_sample)
-
-    batch_size = len(batch)
-
-    contexts = torch.zeros(batch_size, max_context_size).fill_(pad_token_id).long()
-    context_masks = torch.zeros(batch_size, max_context_size).fill_(pad_token_id).long()
-    responses = list()
-    response_masks = list()
-    labels = list()
-
-    for idx in range(batch_size):
-        sample = batch[idx]
-        context = sample[0]
-        context_mask = sample[1]
-        response = sample[2]
-        response_mask = sample[3]
-        label = sample[4]
-
-        contexts[idx].narrow(0, 0, len(context)).copy_(torch.LongTensor(context))
-        context_masks[idx].narrow(0, 0, len(context_mask)).copy_(torch.LongTensor(context_mask))
-        responses.append(response)
-        response_masks.append(response_mask)
-        labels.append(label)
-
-    responses = torch.tensor(responses)
-    response_masks = torch.tensor(response_masks)
-    labels = torch.tensor(labels).long()
-
-    return (
-        contexts,
-        context_masks,
-        responses,
-        response_masks,
-        labels,
-    )
-
-
-class ResponseTransformer(object):
-    def __init__(self, tokenizer):
+class ResponseParser(object):
+    def __init__(self, tokenizer, max_length):
         self.tokenizer = tokenizer
+        self.max_length = max_length
 
     def __call__(self, texts):
-        input_ids_list, input_masks_list = list(), list()
-
+        input_ids_list, segment_ids_list, input_masks_list, contexts_masks_list = [], [], [], []
         for text in texts:
-            tokenized_dict = self.tokenizer(text, max_length=128, padding='max_length')
+            tokenized_dict = self.tokenizer.encode_plus(text, max_length=self.max_length, pad_to_max_length=True)
             input_ids, input_masks = tokenized_dict['input_ids'], tokenized_dict['attention_mask']
             input_ids_list.append(input_ids)
             input_masks_list.append(input_masks)
@@ -60,55 +22,72 @@ class ResponseTransformer(object):
         return input_ids_list, input_masks_list
 
 
-class ContextTransformer(object):
-    def __init__(self, tokenizer):
+class ContextParser(object):
+    def __init__(self, tokenizer, max_length):
         self.tokenizer = tokenizer
+        self.max_length = max_length
 
-        self.cls_token_id = self.tokenizer.cls_token_id
-        self.sep_token_id = self.tokenizer.sep_token_id
-        self.pad_token_id = self.tokenizer.pad_token_id
+        self.cls_id = self.tokenizer.cls_token_id
+        self.sep_id = self.tokenizer.sep_token_id
         self.sep_token = self.tokenizer.sep_token
+        self.pad_id = tokenizer.pad_token_id
 
     def __call__(self, texts):
-        # another option is to use [SEP], but here we follow the discussion at:
-        # https://github.com/facebookresearch/ParlAI/issues/2306#issuecomment-599180186
         context = self.sep_token.join(texts)
-        tokenized_dict = self.tokenizer(context)
+        tokenized_dict = self.tokenizer.encode_plus(context, truncation=True, padding=True)
         input_ids, input_masks = tokenized_dict['input_ids'], tokenized_dict['attention_mask']
+        input_ids = input_ids[-self.max_length:]
+        input_ids[0] = self.cls_id
+        input_masks = input_masks[-self.max_length:]
+        input_ids += [self.pad_id] * (self.max_length - len(input_ids))
+        input_masks += [0] * (self.max_length - len(input_masks))
+        assert len(input_ids) == self.max_length
+        assert len(input_masks) == self.max_length
+
         return input_ids, input_masks
 
 
-class DialogueRetrievalDataset(Dataset):
-    def __init__(self, file_path, tokenizer, sample_cnt=None):
-        self.context_transform = ContextTransformer(tokenizer)
-        self.response_transform = ResponseTransformer(tokenizer)
+class RetrievalDataset(Dataset):
+    def __init__(
+            self,
+            file_path: str,
+            tokenizer: PreTrainedTokenizerFast,
+            context_max_length: int,
+            response_max_length: int,
+            sample_cnt: int = None,
+    ) -> None:
+        self.context_parser = ContextParser(tokenizer, context_max_length)
+        self.response_parser = ResponseParser(tokenizer, response_max_length)
         self.data_source = list()
-        neg_responses = list()
+        negative_responses = list()
 
         with open(file_path, encoding='utf-8') as f:
             group = {
                 'context': None,
-                'responses': list(),
-                'labels': list(),
+                'responses': [],
+                'labels': []
             }
+
             for line in f:
                 split = line.strip('\n').split('\t')
                 label, context, response = int(split[0]), split[1:-1], split[-1]
-                if int(label) == 1 and len(group['responses']) > 0:
+
+                if label == 1 and len(group['responses']) > 0:
                     self.data_source.append(group)
                     group = {
                         'context': None,
-                        'responses': list(),
-                        'labels': list(),
+                        'responses': [],
+                        'labels': []
                     }
                     if sample_cnt is not None and len(self.data_source) >= sample_cnt:
                         break
                 else:
-                    neg_responses.append(response)
+                    negative_responses.append(response)
 
                 group['responses'].append(response)
                 group['labels'].append(label)
                 group['context'] = context
+
             if len(group['responses']) > 0:
                 self.data_source.append(group)
 
@@ -118,6 +97,40 @@ class DialogueRetrievalDataset(Dataset):
     def __getitem__(self, index):
         group = self.data_source[index]
         context, responses, labels = group['context'], group['responses'], group['labels']
-        context, context_mask = self.context_transform(context)
-        responses, response_masks = self.response_transform(responses)
-        return context, context_mask, responses, response_masks, labels
+
+        transformed_context = self.context_parser(context)
+        transformed_responses = self.response_parser(responses)
+
+        return (
+            transformed_context,
+            transformed_responses,
+            labels,
+        )
+
+    def collate_fn(self, batch):
+        contexts, context_masks, responses, response_masks, labels = list(), list(), list(), list(), list()
+
+        for sample in batch:
+            (context, context_mask), (response, response_mask) = sample[:2]
+
+            contexts.append(context)
+            context_masks.append(context_mask)
+
+            responses.append(response)
+            response_masks.append(response_mask)
+
+            labels.append(sample[-1])
+
+        contexts = torch.LongTensor(contexts)
+        context_masks = torch.LongTensor(context_masks)
+        responses = torch.LongTensor(responses)
+        response_masks = torch.LongTensor(response_masks)
+        labels = torch.LongTensor(labels)
+
+        return (
+            contexts,
+            context_masks,
+            responses,
+            response_masks,
+            labels,
+        )

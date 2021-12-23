@@ -28,3 +28,9 @@ Of course, it is also necessary to change the pre-trained model name to fit the 
 ```
 $ python3 train.py --data_dir $DATA_DIR --num_poly_codes 64
 ```
+
+- Interactive
+
+```python
+$ python3 interactive.py --checkpoint_path $CHECKPOINT_PATH --tokenizer_name $TOKENIZER_NAME --candidates_path $CANDIDATES_PATH 
+```

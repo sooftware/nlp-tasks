@@ -4,14 +4,17 @@
 import argparse
 import pickle
 import torch
-import torch.nn as nn
 import numpy as np
-import random
+import os
+from tqdm import tqdm
 from transformers import AutoTokenizer
 from typing import List
 
+from model import PolyEncoderModel
+from dataset import ContextParser
 
-class Chatbot:
+
+class RetrievalBot:
     def __init__(
         self,
         checkpoint_path: str,
@@ -19,18 +22,20 @@ class Chatbot:
         candidate_vectors_path: str,
         candidates_path: str,
         batch_size: int,
+        num_poly_codes: int,
         device: torch.device,
     ):
-        super(Chatbot, self).__init__()
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        super(RetrievalBot, self).__init__()
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name, use_auth_token=True)
 
-        model = torch.load(checkpoint_path)
-        if isinstance(model, nn.DataParallel):
-            self.model = model.module.to(device)
-        else:
-            self.model = model.to(device)
-
+        model = PolyEncoderModel(tokenizer_name, num_poly_codes)
+        print("Load state dict..")
+        success = model.load_state_dict(torch.load(checkpoint_path))
+        print(success)
+        self.model = model.to(device)
         self.model.eval()
+
+        self.context_parser = ContextParser(self.tokenizer, 509)
         self.sep_token = self.tokenizer.sep_token
         self.sep_token_id = self.tokenizer.vocab[self.sep_token]
         self.device = device
@@ -49,26 +54,38 @@ class Chatbot:
             histories: List[str],
     ) -> str:
         scores = list()
-
-        if len(histories) > 10 and random.random() <= 0.15:
-            histories.clear()
-
         histories.append(user_response)
 
-        input_string = self.sep_token.join(histories)
-        inputs = self.tokenizer(input_string, return_tensors="pt").to(self.device)
+        context = self.sep_token.join(histories)
+        context_dict = self.tokenizer(context, return_tensors="pt")
+        context, context_mask = context_dict["input_ids"].to(self.device), context_dict["attention_mask"].to(self.device)
+
+        if len(context) >= 512:
+            for _ in range(3):
+                del histories[0]
+
+        print(self.tokenizer.batch_decode(context))
 
         with torch.no_grad():
-            embeddings = self.model.encode_context(inputs["input_ids"], inputs["attention_mask"])
+            embeddings = self.model.encode_context(context, context_mask)
 
-            for idx in range(0, len(self.vectors), self.batch_size):
+            for idx in tqdm(range(0, len(self.vectors), self.batch_size)):
                 vectors = torch.tensor(self.vectors[idx:idx + self.batch_size]).to(self.device)
-                score = self.model.get_scores(embeddings, vectors, is_training=False)
+                score = self.model.get_score(embeddings, vectors)
                 score = score.squeeze().tolist()
                 scores.extend(score)
 
-        bot_response = self.texts[np.argmax(scores)]
-        histories.append(bot_response)
+        index = -1
+
+        while True:
+            sorted_index = np.argsort(scores)
+            bot_response = self.texts[sorted_index[index]]
+
+            if bot_response in histories:
+                index -= 1
+            else:
+                histories.append((bot_response))
+                break
 
         return bot_response
 
@@ -80,7 +97,7 @@ class Chatbot:
     ):
         assert candidate_vectors_path is not None or candidates_path is not None
 
-        if candidate_vectors_path is None:
+        if candidates_path is not None:
             candidate_dict = {
                 "text": list(),
                 "vector": list(),
@@ -89,12 +106,11 @@ class Chatbot:
             with open(candidates_path, encoding='utf-8-sig') as fr:
                 candidates = fr.readlines()
                 with torch.no_grad():
-                    for idx in range(0, len(candidates), batch_size):
+                    for idx in tqdm(range(0, len(candidates), batch_size)):
                         batch = candidates[idx:idx + batch_size]
                         inputs = self.tokenizer(
                             batch,
                             return_tensors="pt",
-                            max_length=self.tokenizer.model_max_length,
                             truncation=True,
                             padding=True,
                         ).to(self.device)
@@ -128,23 +144,26 @@ def _get_parser():
     parser.add_argument('--tokenizer_name', type=str, required=True)
     parser.add_argument('--candidate_vectors_path', type=str, required=False, default=None)
     parser.add_argument('--candidates_path', type=str, required=False, default=None)
+    parser.add_argument('--num_poly_codes', type=int, default=64)
     parser.add_argument('--batch_size', type=int, default=128)
     return parser
 
 
 def main():
+    os.environ["TOKENIZERS_PARALLELISM"] = "true"
     histories = list()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     parser = _get_parser()
     args = parser.parse_args()
 
-    chatbot = Chatbot(args.checkpoint_path,
-                      args.tokenizer_name,
-                      args.candidate_vectors_path,
-                      args.candidates_path,
-                      args.batch_size,
-                      device)
+    chatbot = RetrievalBot(args.checkpoint_path,
+                           args.tokenizer_name,
+                           args.candidate_vectors_path,
+                           args.candidates_path,
+                           args.batch_size,
+                           args.num_poly_codes,
+                           device)
 
     while True:
         user_response = input("YOUR TURN: ")

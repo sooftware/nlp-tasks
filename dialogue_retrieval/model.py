@@ -4,83 +4,81 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from transformers import ElectraModel, AutoConfig
+from transformers import AutoModel
 
 
 class PolyEncoderModel(nn.Module):
-    def __init__(
-            self,
-            pretrain_model_name_or_path,
-            num_poly_codes: int,
-    ) -> None:
+    def __init__(self, pretrain_model_name_or_path, num_poly_codes: int = 64):
         super().__init__()
-        self.model = ElectraModel.from_pretrained(pretrain_model_name_or_path)
-        self.config = AutoConfig.from_pretrained(pretrain_model_name_or_path)
+        self.model = AutoModel.from_pretrained(pretrain_model_name_or_path)
         self.num_poly_codes = num_poly_codes
-        self.poly_code_ids = torch.arange(self.num_poly_codes).long().unsqueeze(0)
-        self.poly_code_embeddings = nn.Embedding(num_poly_codes, self.config.hidden_size)
-        torch.nn.init.normal_(self.poly_code_embeddings.weight, self.config.hidden_size ** -0.5)
+        self.poly_code_embeddings = nn.Embedding(self.num_poly_codes, self.model.config.hidden_size)
+        torch.nn.init.normal_(self.poly_code_embeddings.weight, self.model.config.hidden_size ** -0.5)
 
-    def _get_batch_size(self, tensor):
-        return tensor.size(0)
-
-    def _dot_attention(self, query, key, value):
-        attn_weights = torch.matmul(query, key.transpose(2, 1))
-        attn_weights = F.softmax(attn_weights, -1)
-        return torch.matmul(attn_weights, value)
+    def dot_attention(self, query, key, value):
+        attn = torch.matmul(query, key.transpose(2, 1))
+        attn = F.softmax(attn, -1)
+        return torch.matmul(attn, value)
 
     def encode_context(self, input_ids, attention_masks):
-        assert len(input_ids.size()) == 2
-        assert len(attention_masks.size()) == 2
-
-        batch_size = self._get_batch_size(input_ids)
+        batch_size = input_ids.size(0)
 
         context_outputs = self.model(input_ids, attention_masks)[0]
-
-        poly_code_ids = self.poly_code_ids.expand(batch_size, self.num_poly_codes).to(input_ids.device)
+        poly_code_ids = torch.arange(self.num_poly_codes, dtype=torch.long).to(input_ids.device)
+        poly_code_ids = poly_code_ids.unsqueeze(0).expand(batch_size, self.num_poly_codes)
         poly_codes = self.poly_code_embeddings(poly_code_ids)
-
-        return self._dot_attention(poly_codes, context_outputs, context_outputs)
+        return self.dot_attention(poly_codes, context_outputs, context_outputs)
 
     def encode_response(self, input_ids, attention_masks):
-        batch_size, num_responses, seq_length = input_ids.size()
+        batch_size, num_responses, seq_length = input_ids.shape
 
-        input_ids = input_ids.view(-1, seq_length)
-        attention_masks = attention_masks.view(-1, seq_length)
+        responses_input_ids = input_ids.view(-1, seq_length)
+        responses_input_masks = attention_masks.view(-1, seq_length)
 
-        candidate_embeddings = self.model(input_ids, attention_masks)[0][:, 0, :]
+        candidate_embeddings = self.model(responses_input_ids, responses_input_masks)[0][:, 0, :]
         return candidate_embeddings.view(batch_size, num_responses, -1)
 
-    def _get_num_responses(self, responses_input_ids):
-        return responses_input_ids.size(1)
+    def get_score(self, contexts, responses):
+        contexts = self.dot_attention(responses, contexts, contexts)
+        score = (contexts * responses).sum(-1)
+        return score
 
-    def get_scores(self, embeddings, candidate_embeddings, is_training: bool = True):
-        batch_size, _, dim = candidate_embeddings.size()
+    def get_loss(self, contexts, responses):
+        batch_size = contexts.size(0)
 
-        if is_training:
-            candidate_embeddings = candidate_embeddings.transpose(0, 1)
-            candidate_embeddings = candidate_embeddings.expand(batch_size, batch_size, dim)
+        responses = responses.permute(1, 0, 2)
+        responses = responses.expand(batch_size, batch_size, responses.size(2))
 
-            context_embeddings = self._dot_attention(candidate_embeddings, embeddings, embeddings)
-            context_embeddings = context_embeddings.squeeze()
+        contexts = self.dot_attention(responses, contexts, contexts).squeeze()
+        dot_product = (contexts * responses).sum(-1)
 
-        else:
-            context_embeddings = self._dot_attention(candidate_embeddings, embeddings, embeddings)
+        mask = torch.eye(batch_size).to(contexts.device)
 
-        scores = (context_embeddings * candidate_embeddings).sum(-1)
-        return scores
+        loss = F.log_softmax(dot_product, dim=-1) * mask
+        loss = (-loss.sum(dim=1)).mean()
+
+        return loss
 
     def forward(
             self,
-            contexts,
-            context_attention_masks,
-            responses,
-            response_attention_masks,
+            context_input_ids,
+            context_input_masks,
+            responses_input_ids,
+            responses_input_masks,
+            labels=None,
     ):
-        num_responses = self._get_num_responses(responses)
-        is_training = True if num_responses == 1 else False
+        is_training = True if labels is not None else False
 
-        embeddings = self.encode_context(contexts, context_attention_masks)
-        candidate_embeddings = self.encode_response(responses, response_attention_masks)
+        if is_training:
+            responses_input_ids = responses_input_ids[:, 0, :].unsqueeze(1)
+            responses_input_masks = responses_input_masks[:, 0, :].unsqueeze(1)
 
-        return self.get_scores(embeddings, candidate_embeddings, is_training)
+        contexts = self.encode_context(context_input_ids, context_input_masks)
+        responses = self.encode_response(responses_input_ids, responses_input_masks)
+
+        if is_training:
+            output = self.get_loss(contexts, responses)
+        else:
+            output = self.get_score(contexts, responses)
+
+        return output
