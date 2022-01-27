@@ -99,6 +99,7 @@ With the advancement of A.I. technology in recent years, natural language proces
 - **`PAPER-WITH-CODE`** [Math Word Problem Solving](https://paperswithcode.com/task/math-word-problem-solving)
 - **`DATA`** [DeepMind Mathmatics Dataset](https://github.com/deepmind/mathematics_dataset)
 - **`DATA`** [KMWP (Korean Math Word Problems)](https://github.com/tunib-ai/KMWP)
+- **`CODE`** [Example with KMWP](https://github.com/sooftware/nlp-tasks/tree/main/math_word_problem)
   
 ## Natural Language Inference
   
