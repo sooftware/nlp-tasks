@@ -78,32 +78,22 @@ def collate_fn(batch, pad_token_id):
 
 
 class MathWordProblemDataset(Dataset):
-    def __init__(self, data_sources, tokenizer, sep_token: str = "<unused0>", is_training: bool = True):
+    def __init__(self, data_sources, tokenizer):
         super(MathWordProblemDataset, self).__init__()
         self.input_ids = list()
         self.attention_masks = list()
         self.labels = list()
         self.answers = list()
-        self.is_training = is_training
         self.eos_token = tokenizer.eos_token
 
-        if is_training:
-            for example, code, answer in zip(data_sources["examples"], data_sources["codes"], data_sources["answers"]):
-                inputs = example + sep_token + code + self.eos_token
+        for example, code, answer in zip(data_sources["examples"], data_sources["codes"], data_sources["answers"]):
+            inputs = example + tokenizer.sep_token + code + self.eos_token
 
-                encoding_dict = tokenizer(inputs, truncation=True, padding=True, max_length=1024)
-                self.input_ids.append(encoding_dict["input_ids"])
-                self.attention_masks.append(encoding_dict["attention_mask"])
-                self.labels.append(encoding_dict["input_ids"])
-                self.answers.append(answer)
-        else:
-            for example, answer in zip(data_sources["examples"], data_sources["answers"]):
-                inputs = example + sep_token
-                encoding_dict = tokenizer(inputs, truncation=True, padding=True, max_length=1024)
-                self.input_ids.append(encoding_dict["input_ids"])
-                self.attention_masks.append(encoding_dict["attention_mask"])
-                self.labels.append(encoding_dict["input_ids"])
-                self.answers.append(answer)
+            encoding_dict = tokenizer(inputs, truncation=True, padding=True, max_length=1024)
+            self.input_ids.append(encoding_dict["input_ids"])
+            self.attention_masks.append(encoding_dict["attention_mask"])
+            self.labels.append(encoding_dict["input_ids"])
+            self.answers.append(answer)
 
     def __len__(self):
         return len(self.input_ids)
