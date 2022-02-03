@@ -64,6 +64,7 @@ class Trainer:
                     labels.to(self.device),
                 )
 
+                loss = loss.mean()
                 loss = loss / self.accumulate_grad_batches
                 loss.backward()
 
