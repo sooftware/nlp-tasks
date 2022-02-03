@@ -64,6 +64,7 @@ class LanguageModelingTrainer:
             outputs = self.model(input_ids=inputs, attention_mask=attention_masks, labels=labels)
             loss = outputs.loss
 
+            loss = loss.mean()
             loss = loss / self.accumulate_grad_batches
 
             self.optimizer.zero_grad()
