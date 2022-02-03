@@ -61,7 +61,7 @@ def main():
     datas["train"] = dataset[:-num_valid_datas]
     datas["valid"] = dataset[-num_valid_datas:]
 
-    tokenizer = AutoTokenizer.from_pretrained(args.pretrain_model_name)
+    tokenizer = AutoTokenizer.from_pretrained(args.pretrain_tokenizer_name)
     model = nn.DataParallel(GPT2LMHeadModel(GPT2Config(vocab_size=len(tokenizer)))).to(device)
     wandb.watch(model)
 
