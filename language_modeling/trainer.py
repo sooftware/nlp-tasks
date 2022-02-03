@@ -86,7 +86,7 @@ class LanguageModelingTrainer:
                 if not os.path.exists(self.save_dir):
                     os.mkdir(self.save_dir)
                 date_time = time.strftime('%Y_%m_%d_%H_%M_%S', time.localtime())
-                self.model.save_pretrained(os.path.join(self.save_dir, date_time))
+                self.model.module.save_pretrained(os.path.join(self.save_dir, date_time))
 
     def _validate(self, epoch):
         valid_loss = 0.0
