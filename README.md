@@ -63,6 +63,12 @@ With the advancement of A.I. technology in recent years, natural language proces
 - **`REPRESENTATIVE-DATA`** [Multilingual Pronunciation Data](https://drive.google.com/drive/folders/0B7R_gATfZJ2aWkpSWHpXUklWUmM)
 - **`OFF-THE-SHELF-MODEL`** [Pororo's G2P](https://kakaobrain.github.io/pororo/seq2seq/g2p.html)
   
+## Knowledge Powered Conversation
+  
+- **`PAPER`** [Wizard of Wikipedia: Knowledge-Powered Conversational agents](https://arxiv.org/abs/1811.01241)
+- **`DATA`** [Wizard of Wikipedia](https://huggingface.co/datasets/maximedb/wow)  
+- **`CODE`** [Example with Wizard of Wikipedia](https://github.com/sooftware/nlp-tasks/tree/main/knowledge_powered_conversation)
+  
 ## Language Modeling
   
 - **`WIKI`** [Language Model](https://en.wikipedia.org/wiki/Language_model)
