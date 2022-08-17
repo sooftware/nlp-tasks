@@ -36,7 +36,7 @@ class SentimentAnalysisTrainer:
         self.save_every = save_every
         self.num_epochs = num_epochs
         self.tokenizer = tokenizer
-        self.sos_id = tokenizer.sos_token_id
+        self.sos_id = tokenizer.bos_token_id
         self.eos_id = tokenizer.eos_token_id
         self.device = device
         self.gradient_clip_val = gradient_clip_val
